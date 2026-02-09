@@ -1,12 +1,251 @@
-# Updated Export-EntraIDUsers.ps1 Script
+<#
+.SYNOPSIS
+    Export Entra ID (Azure AD) users to CSV with comprehensive attributes including accurate mailbox types.
+.DESCRIPTION
+    This script exports user data from Microsoft Entra ID including:
+    - Source, Employment Status, Display Name, Last/First Name
+    - UPN, Title, Department, Is VIP, Employment Type, Manager
+    - Email, Phone, Physical Address, Office Affiliation, Working Environment
+    - Language Preference, Account Status, Blocked Credentials
+    - Account Type, Mailbox Type (User/Shared/Room/Equipment), Assigned Licenses
+    - OneDrive Status
+.PARAMETER OutputPath
+    The path where the CSV file will be saved. Default: EntraIDUsers_YYYYMMDD_HHMMSS.csv
+.EXAMPLE
+    .\Export-EntraIDUsers.ps1
+    .\Export-EntraIDUsers.ps1 -OutputPath "C:\Exports\Users.csv"
+.NOTES
+    Requires: Microsoft.Graph PowerShell module, ExchangeOnlineManagement module
+    Permissions needed: User.Read.All, Directory.Read.All, Organization.Read.All, Files.Read.All
+    Exchange Online: Organization Management or View-Only Organization Management role
+#>
 
-# File content with new columns and reordered columns
-# Assuming that the data retrieval and processing part is handled before this point
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory = $false)]
+    [string]$OutputPath = "EntraIDUsers_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+)
 
-dimensions = "Source, Employment Status, Display Name, Last Name, First Name, UPN, Title, Department, Is VIP?, Employment Type, Manager, Email Address, Phone Number, Physical Delivery Address, Office Affiliation, Working Environment, Language Preference, Account Status, Blocked Credentials, Account Type, Mailbox Type, Has OneDrive, Assigned Licenses"
+# Check if required modules are installed
+if (-not (Get-Module -ListAvailable -Name Microsoft.Graph)) {
+    Write-Error "Microsoft.Graph module is not installed. Please run: Install-Module Microsoft.Graph -Scope CurrentUser"
+    exit
+}
 
-# Continue with the processing logic
+if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
+    Write-Warning "ExchangeOnlineManagement module is not installed. Mailbox type detection will be limited."
+    Write-Host "To install: Install-Module ExchangeOnlineManagement -Scope CurrentUser" -ForegroundColor Yellow
+    $useExchange = $false
+} else {
+    $useExchange = $true
+}
 
-# Your existing code logic would be here
+Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
+try {
+    Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All", "Organization.Read.All", "Files.Read.All" -NoWelcome
+    Write-Host "Connected successfully!" -ForegroundColor Green
+}
+catch {
+    Write-Error "Failed to connect to Microsoft Graph: $_"
+    exit
+}
 
-# Script ends here.
+# Connect to Exchange Online if module is available
+$mailboxData = @{}
+if ($useExchange) {
+    Write-Host "Connecting to Exchange Online..." -ForegroundColor Cyan
+    try {
+        Connect-ExchangeOnline -ShowBanner:$false
+        Write-Host "Connected to Exchange Online successfully!" -ForegroundColor Green
+        
+        Write-Host "Retrieving mailbox information from Exchange Online..." -ForegroundColor Cyan
+        $mailboxes = Get-EXOMailbox -ResultSize Unlimited -Properties RecipientTypeDetails, UserPrincipalName
+        
+        foreach ($mbx in $mailboxes) {
+            $mailboxData[$mbx.UserPrincipalName] = $mbx.RecipientTypeDetails
+        }
+        
+        Write-Host "Retrieved mailbox information for $($mailboxData.Count) mailboxes" -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "Failed to connect to Exchange Online: $_"
+        Write-Warning "Mailbox type detection will be limited to basic detection."
+        $useExchange = $false
+    }
+}
+
+Write-Host "Retrieving users from Entra ID..." -ForegroundColor Cyan
+
+$users = Get-MgUser -All -Property @(
+    'Id', 'UserPrincipalName', 'DisplayName', 'GivenName', 'Surname', 'Mail',
+    'JobTitle', 'Department', 'OfficeLocation', 'StreetAddress', 'City', 'State',
+    'PostalCode', 'Country', 'MobilePhone', 'BusinessPhones', 'PreferredLanguage',
+    'AccountEnabled', 'OnPremisesSyncEnabled', 'EmployeeType', 'UserType', 
+    'AssignedLicenses', 'CompanyName', 'EmployeeId', 'UsageLocation'
+)
+
+Write-Host "Found $($users.Count) users. Processing data..." -ForegroundColor Cyan
+
+Write-Host "Retrieving license SKU information..." -ForegroundColor Cyan
+$allSkus = Get-MgSubscribedSku -All
+$skuHashTable = @{}
+foreach ($sku in $allSkus) {
+    $skuHashTable[$sku.SkuId] = $sku.SkuPartNumber
+}
+
+$licenseNames = @{
+    'O365_BUSINESS_ESSENTIALS' = 'Office 365 Business Essentials'
+    'O365_BUSINESS_PREMIUM' = 'Office 365 Business Premium'
+    'DESKLESSPACK' = 'Office 365 F3'
+    'DESKLESSWOFFPACK' = 'Office 365 F3'
+    'ENTERPRISEPACK' = 'Office 365 E3'
+    'ENTERPRISEPREMIUM' = 'Office 365 E5'
+    'ENTERPRISEPREMIUM_NOPSTNCONF' = 'Office 365 E5 Without Audio Conferencing'
+    'SPE_E3' = 'Microsoft 365 E3'
+    'SPE_E5' = 'Microsoft 365 E5'
+    'MICROSOFT365_F1' = 'Microsoft 365 F1'
+    'MICROSOFT365_F3' = 'Microsoft 365 F3'
+    'EXCHANGESTANDARD' = 'Exchange Online Plan 1'
+    'EXCHANGEENTERPRISE' = 'Exchange Online Plan 2'
+    'POWER_BI_STANDARD' = 'Power BI Free'
+    'POWER_BI_PRO' = 'Power BI Pro'
+    'PROJECTPROFESSIONAL' = 'Project Plan 3'
+    'PROJECTESSENTIALS' = 'Project Plan 1'
+    'VISIOCLIENT' = 'Visio Plan 2'
+    'TEAMS_EXPLORATORY' = 'Microsoft Teams Exploratory'
+    'STREAM' = 'Microsoft Stream'
+    'AAD_PREMIUM' = 'Azure Active Directory Premium P1'
+    'AAD_PREMIUM_P2' = 'Azure Active Directory Premium P2'
+    'INTUNE_A' = 'Microsoft Intune'
+    'FLOW_FREE' = 'Microsoft Power Automate Free'
+    'POWERAPPS_VIRAL' = 'Microsoft Power Apps Plan 2 Trial'
+}
+
+$exportData = @()
+$counter = 0
+
+foreach ($user in $users) {
+    $counter++
+    Write-Progress -Activity "Processing users" -Status "Processing $counter of $($users.Count)" -PercentComplete (($counter / $users.Count) * 100)
+    
+    $manager = $null
+    try { 
+        $manager = Get-MgUserManager -UserId $user.Id -ErrorAction SilentlyContinue 
+    } catch { }
+    
+    $source = if ($user.OnPremisesSyncEnabled -eq $true) { "On-Premises Synced" } else { "Cloud" }
+    
+    $assignedLicenses = @()
+    if ($user.AssignedLicenses -and $user.AssignedLicenses.Count -gt 0) {
+        foreach ($license in $user.AssignedLicenses) {
+            if ($skuHashTable.ContainsKey($license.SkuId)) {
+                $skuPartNumber = $skuHashTable[$license.SkuId]
+                $friendlyName = if ($licenseNames.ContainsKey($skuPartNumber)) { 
+                    $licenseNames[$skuPartNumber] 
+                } else { 
+                    $skuPartNumber 
+                }
+                $assignedLicenses += $friendlyName
+            }
+        }
+    }
+    $licenseString = if ($assignedLicenses.Count -gt 0) { $assignedLicenses -join "; " } else { "No Licenses" }
+    
+    $mailboxType = "No Mailbox"
+    if ($useExchange -and $mailboxData.ContainsKey($user.UserPrincipalName)) {
+        $recipientType = $mailboxData[$user.UserPrincipalName]
+        switch ($recipientType) {
+            "UserMailbox" { $mailboxType = "User Mailbox" }
+            "SharedMailbox" { $mailboxType = "Shared Mailbox" }
+            "RoomMailbox" { $mailboxType = "Room Mailbox" }
+            "EquipmentMailbox" { $mailboxType = "Equipment Mailbox" }
+            "DiscoveryMailbox" { $mailboxType = "Discovery Mailbox" }
+            "RemoteUserMailbox" { $mailboxType = "Remote User Mailbox" }
+            "RemoteRoomMailbox" { $mailboxType = "Remote Room Mailbox" }
+            "RemoteEquipmentMailbox" { $mailboxType = "Remote Equipment Mailbox" }
+            "RemoteSharedMailbox" { $mailboxType = "Remote Shared Mailbox" }
+            default { $mailboxType = $recipientType }
+        }
+    } elseif ($user.Mail) {
+        $mailboxType = if ($user.UserType -eq "Guest") { "Guest Mailbox" } else { "User Mailbox" }
+    }
+    
+    $hasOneDrive = "No"
+    try {
+        $drive = Get-MgUserDrive -UserId $user.Id -ErrorAction SilentlyContinue
+        if ($drive) { $hasOneDrive = "Yes" }
+    } catch { }
+    
+    $physicalAddress = @()
+    if ($user.StreetAddress) { $physicalAddress += $user.StreetAddress }
+    if ($user.City) { $physicalAddress += $user.City }
+    if ($user.State) { $physicalAddress += $user.State }
+    if ($user.PostalCode) { $physicalAddress += $user.PostalCode }
+    if ($user.Country) { $physicalAddress += $user.Country }
+    $addressString = if ($physicalAddress.Count -gt 0) { $physicalAddress -join ", " } else { "" }
+    
+    $accountStatus = if ($user.AccountEnabled) { "Enabled" } else { "Disabled" }
+    $blockedCredentials = if (-not $user.AccountEnabled) { "Yes" } else { "No" }
+    $phoneNumber = if ($user.MobilePhone) { $user.MobilePhone } elseif ($user.BusinessPhones.Count -gt 0) { $user.BusinessPhones[0] } else { "" }
+    
+    # Determine Is VIP (can be customized based on your criteria)
+    $isVIP = "No"
+    if ($user.JobTitle -match "CEO|CTO|CFO|President|VP|Vice President|Director") {
+        $isVIP = "Yes"
+    }
+    
+    # Employment Type - using EmployeeType property
+    $employmentType = if ($user.EmployeeType) { $user.EmployeeType } else { "Not Set" }
+    
+    # Office Affiliation - using OfficeLocation
+    $officeAffiliation = if ($user.OfficeLocation) { $user.OfficeLocation } else { "" }
+    
+    # Working Environment - determine based on available data
+    $workingEnvironment = if ($user.OfficeLocation) { "Office" } else { "Remote/Not Set" }
+    
+    $exportData += [PSCustomObject]@{
+        'Source' = $source
+        'Employment Status' = if ($user.EmployeeType) { $user.EmployeeType } else { "Not Set" }
+        'Display Name' = $user.DisplayName
+        'Last Name' = $user.Surname
+        'First Name' = $user.GivenName
+        'UPN' = $user.UserPrincipalName
+        'Title' = $user.JobTitle
+        'Department' = $user.Department
+        'Is VIP?' = $isVIP
+        'Employment Type' = $employmentType
+        'Manager' = if ($manager) { $manager.AdditionalProperties.displayName } else { "" }
+        'Email Address' = $user.Mail
+        'Phone Number' = $phoneNumber
+        'Physical Delivery Address' = $addressString
+        'Office Affiliation' = $officeAffiliation
+        'Working Environment' = $workingEnvironment
+        'Language Preference' = $user.PreferredLanguage
+        'Account Status' = $accountStatus
+        'Blocked Credentials' = $blockedCredentials
+        'Account Type' = $user.UserType
+        'Mailbox Type' = $mailboxType
+        'Has OneDrive' = $hasOneDrive
+        'Assigned Licenses' = $licenseString
+    }
+}
+
+Write-Progress -Activity "Processing users" -Completed
+
+Write-Host "Exporting to CSV..." -ForegroundColor Cyan
+try {
+    $exportData | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
+    Write-Host "Export completed successfully!" -ForegroundColor Green
+    Write-Host "File saved to: $OutputPath" -ForegroundColor Green
+    Write-Host "Total users exported: $($exportData.Count)" -ForegroundColor Green
+} catch {
+    Write-Error "Failed to export CSV: $_"
+}
+
+if ($useExchange) {
+    Disconnect-ExchangeOnline -Confirm:$false | Out-Null
+    Write-Host "Disconnected from Exchange Online." -ForegroundColor Cyan
+}
+
+Disconnect-MgGraph | Out-Null
+Write-Host "Disconnected from Microsoft Graph." -ForegroundColor Cyan
