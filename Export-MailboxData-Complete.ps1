@@ -48,7 +48,7 @@ function ConvertTo-Bytes {
     }
     
     # Try to extract bytes from format like "1.5 GB (1,610,612,736 bytes)"
-    if ($sizeString -match '\(([\d,]+)\s*bytes\)') {
+    if ($sizeString -match '\(([,]+)\s*bytes\)') {
         return [long]($matches[1] -replace ',', '')
     }
     
@@ -75,6 +75,27 @@ function Get-CalendarStats {
     return 0
 }
 
+# Function to get account status
+function Get-AccountStatus {
+    param($UserPrincipalName)
+    
+    if (-not $UserPrincipalName) {
+        return "Unknown"
+    }
+    
+    try {
+        $user = Get-MgUser -UserId $UserPrincipalName -Property AccountEnabled -ErrorAction SilentlyContinue
+        if ($user) {
+            return if ($user.AccountEnabled) { "Active" } else { "Disabled" }
+        }
+    }
+    catch {
+        # Silently continue
+    }
+    
+    return "Unknown"
+}
+
 # Import Exchange Online Management module
 try {
     Import-Module ExchangeOnlineManagement -ErrorAction Stop
@@ -86,17 +107,15 @@ catch {
     exit
 }
 
-# Import Microsoft Graph module if not skipping licenses
-if (-not $SkipLicenses) {
-    try {
-        Import-Module Microsoft.Graph.Users -ErrorAction Stop
-        Write-Host "Microsoft Graph Users module loaded successfully" -ForegroundColor Green
-    }
-    catch {
-        Write-Host "Warning: Microsoft Graph Users module not found. License information will be skipped." -ForegroundColor Yellow
-        Write-Host "To include licenses, install the module: Install-Module -Name Microsoft.Graph.Users -Scope CurrentUser" -ForegroundColor Yellow
-        $SkipLicenses = $true
-    }
+# Import Microsoft Graph module
+try {
+    Import-Module Microsoft.Graph.Users -ErrorAction Stop
+    Write-Host "Microsoft Graph Users module loaded successfully" -ForegroundColor Green
+}
+catch {
+    Write-Host "Error: Microsoft Graph Users module not found. Please install it first:" -ForegroundColor Red
+    Write-Host "Install-Module -Name Microsoft.Graph.Users -Scope CurrentUser" -ForegroundColor Yellow
+    exit
 }
 
 # Connect to Exchange Online
@@ -110,22 +129,19 @@ catch {
     exit
 }
 
-# Connect to Microsoft Graph if not skipping licenses
+# Connect to Microsoft Graph
 $graphConnected = $false
-if (-not $SkipLicenses) {
-    try {
-        Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
-        Write-Host "Please complete the authentication in your browser..." -ForegroundColor Yellow
-        Connect-MgGraph -Scopes "User.Read.All" -NoWelcome -ErrorAction Stop
-        Write-Host "Connected to Microsoft Graph successfully!" -ForegroundColor Green
-        $graphConnected = $true
-    }
-    catch {
-        Write-Host "Warning: Could not connect to Microsoft Graph. License information will be skipped." -ForegroundColor Yellow
-        Write-Host "Error: $_" -ForegroundColor Yellow
-        $SkipLicenses = $true
-        $graphConnected = $false
-    }
+try {
+    Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
+    Write-Host "Please complete the authentication in your browser..." -ForegroundColor Yellow
+    Connect-MgGraph -Scopes "User.Read.All" -NoWelcome -ErrorAction Stop
+    Write-Host "Connected to Microsoft Graph successfully!" -ForegroundColor Green
+    $graphConnected = $true
+}
+catch {
+    Write-Host "Warning: Could not connect to Microsoft Graph. License and account status information will be limited." -ForegroundColor Yellow
+    Write-Host "Error: $_" -ForegroundColor Yellow
+    $graphConnected = $false
 }
 
 # Get all mailboxes
@@ -218,6 +234,12 @@ foreach ($mailbox in $mailboxes) {
         # Get user information
         $user = Get-User -Identity $mailbox.Identity -ErrorAction SilentlyContinue
         
+        # Get account status from Microsoft Graph
+        $accountStatus = "Unknown"
+        if ($graphConnected -and $mbxDetails.UserPrincipalName) {
+            $accountStatus = Get-AccountStatus -UserPrincipalName $mbxDetails.UserPrincipalName
+        }
+        
         # Get license information from Graph API
         $assignedProducts = ""
         if ($graphConnected -and $mbxDetails.UserPrincipalName) {
@@ -260,13 +282,18 @@ foreach ($mailbox in $mailboxes) {
         # Get x500 address
         $x500 = ($mbxDetails.EmailAddresses | Where-Object { $_ -like "X500:*" }) -join "; "
         
-        # Create custom object with all properties
+        # Determine mailbox type
+        $mailboxType = $mbxDetails.RecipientTypeDetails
+        
+        # Create custom object with all properties in the specified order
         $obj = [PSCustomObject]@{
-            'Source Employment Status' = $user.RecipientTypeDetails
+            'Source Employment Status' = $accountStatus
+            'Mailbox Type' = $mailboxType
             'Source Display Name' = $mbxDetails.DisplayName
             'Source Email Address' = $mbxDetails.PrimarySmtpAddress
             'Email Last Activity Date' = $stats.LastLogonTime
             'Assigned Products' = $assignedProducts
+            'Workday ID' = ""
             'Destination Email Address' = ""
             'Destination UPN' = ""
             'Source UPN' = $mbxDetails.UserPrincipalName
@@ -319,36 +346,3 @@ if ($graphConnected) {
 }
 
 Write-Host "Done!" -ForegroundColor Green
-
-<#
-USAGE EXAMPLES:
-
-1. Full export with all data (default - last 10 days of message tracking):
-   .\Export-MailboxData-Complete.ps1
-
-2. Skip licenses (faster):
-   .\Export-MailboxData-Complete.ps1 -SkipLicenses
-
-3. Skip message tracking (much faster):
-   .\Export-MailboxData-Complete.ps1 -SkipMessageTracking
-
-4. Skip both for fastest execution:
-   .\Export-MailboxData-Complete.ps1 -SkipLicenses -SkipMessageTracking
-
-5. Custom time range for message tracking (7 days, max 10):
-   .\Export-MailboxData-Complete.ps1 -Days 7
-
-6. Custom output path:
-   .\Export-MailboxData-Complete.ps1 -OutputPath "C:\Reports\mailboxes.csv"
-
-NOTES:
-- Uses Get-MessageTraceV2 (replaces deprecated Get-MessageTrace)
-- Get-MessageTraceV2 supports max 10 days lookback and auto-handles pagination
-- Send Count & Receive Count: Retrieved from message tracking logs
-- Read Count: Approximated as (Total Items - Deleted Items)
-- Deleted Item Count: Retrieved from mailbox statistics
-- Meeting Created Count: Retrieved from calendar folder item count
-- Source Meeting Interacted Count: Approximated as calendar item count
-
-Message tracking can be slow for large organizations. Use -SkipMessageTracking for faster execution.
-#>
