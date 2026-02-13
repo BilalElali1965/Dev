@@ -2,7 +2,12 @@
 .SYNOPSIS
     Switch user UPNs and email addresses from old domain to new domain
 .DESCRIPTION
-    Updates User Principal Names and email addresses for users in Azure AD and Exchange Online
+    Updates User Principal Names and email addresses for users in Azure AD and Exchange Online.
+    This script will:
+    - Change UserPrincipalName from old domain to new domain
+    - Update primary SMTP address to new domain
+    - Replace ALL email aliases containing old domain with new domain
+    - Preserve all other email addresses unchanged
 .PARAMETER OldDomain
     The old domain (e.g., olddomain.com)
 .PARAMETER NewDomain
@@ -72,7 +77,7 @@ Write-Log "Connected to Microsoft Graph"
 
 # Connect to Exchange Online
 Write-Host "Connecting to Exchange Online..." -ForegroundColor Green
-Connect-ExchangeOnline -ShowBanner:alse
+Connect-ExchangeOnline -ShowBanner:$false
 Write-Log "Connected to Exchange Online"
 
 # Get users to migrate
@@ -91,7 +96,7 @@ if ($UsersFile -and (Test-Path $UsersFile)) {
     Write-Log "Querying all users with domain: $OldDomain"
     $allUsers = Get-MgUser -All -Property Id,UserPrincipalName,Mail,ProxyAddresses
     $usersToMigrate = $allUsers | Where-Object { 
-        $_.UserPrincipalName -like "*@$OldDomain" 
+        $_.UserPrincipalName -like "*@\$OldDomain" 
     }
 }
 
@@ -133,26 +138,32 @@ foreach ($user in $usersToMigrate) {
             # Update primary email in Exchange
             $mailbox = Get-Mailbox -Identity $newUPN -ErrorAction SilentlyContinue
             if ($mailbox) {
-                Write-Host "  Updating primary email address" -ForegroundColor Gray
-                $newPrimarySMTP = "SMTP:$username@$NewDomain"
-                $oldPrimarySMTP = "smtp:$username@$OldDomain"
+                Write-Host "  Updating email addresses (primary and all aliases)" -ForegroundColor Gray
                 
                 # Get current email addresses
                 $emailAddresses = @($mailbox.EmailAddresses)
                 
-                # Remove old primary, add as secondary
-                $emailAddresses = $emailAddresses | Where-Object { $_ -notlike "SMTP:*@$OldDomain" }
-                
-                # Add new primary
-                $emailAddresses = @($newPrimarySMTP) + $emailAddresses
-                
-                # Add old domain as alias if not already present
-                if ($emailAddresses -notcontains $oldPrimarySMTP) {
-                    $emailAddresses += $oldPrimarySMTP
+                # Replace ALL addresses with old domain to new domain
+                $updatedAddresses = @()
+                foreach ($addr in $emailAddresses) {
+                    if ($addr -like "*@\$OldDomain") {
+                        # Replace old domain with new domain, preserve prefix type (SMTP: vs smtp:)
+                        $newAddr = $addr -replace "@\$OldDomain", "@\$NewDomain"
+                        $updatedAddresses += $newAddr
+                        Write-Host "    Converted: $addr -> $newAddr" -ForegroundColor DarkGray
+                    } else {
+                        # Keep addresses from other domains unchanged
+                        $updatedAddresses += $addr
+                    }
                 }
                 
-                Set-Mailbox -Identity $newUPN -EmailAddresses $emailAddresses -WindowsEmailAddress "$username@$NewDomain"
-                Write-Log "  Updated email addresses for: $newUPN"
+                # Ensure new primary is set correctly (uppercase SMTP:)
+                $newPrimarySMTP = "SMTP:$username@$NewDomain"
+                $updatedAddresses = $updatedAddresses | Where-Object { $_ -ne $newPrimarySMTP }
+                $updatedAddresses = @($newPrimarySMTP) + $updatedAddresses
+                
+                Set-Mailbox -Identity $newUPN -EmailAddresses $updatedAddresses -WindowsEmailAddress "$username@$NewDomain"
+                Write-Log "  Updated email addresses for: $newUPN (primary + all aliases)"
             }
             
             Write-Host "  SUCCESS" -ForegroundColor Green
@@ -160,6 +171,19 @@ foreach ($user in $usersToMigrate) {
         } else {
             Write-Host "  TEST MODE: Would update UPN to: $newUPN" -ForegroundColor Yellow
             Write-Host "  TEST MODE: Would update primary email to: $username@$NewDomain" -ForegroundColor Yellow
+            
+            # Show what would be changed
+            $mailbox = Get-Mailbox -Identity $currentUPN -ErrorAction SilentlyContinue
+            if ($mailbox) {
+                Write-Host "  TEST MODE: Current aliases to be converted:" -ForegroundColor Yellow
+                foreach ($addr in $mailbox.EmailAddresses) {
+                    if ($addr -like "*@\$OldDomain") {
+                        $newAddr = $addr -replace "@\$OldDomain", "@\$NewDomain"
+                        Write-Host "    $addr -> $newAddr" -ForegroundColor DarkYellow
+                    }
+                }
+            }
+            
             Write-Log "  TEST MODE: $currentUPN -> $newUPN"
             $successCount++
         }
