@@ -1,0 +1,209 @@
+{
+  "Version": "1.0.0",
+  "GeneralSettings": {
+    "LogLevel": "Information",
+    "LogPath": "./Logs",
+    "MaxLogRetentionDays": 90,
+    "EnableProgressIndicators": true,
+    "EnableDetailedErrorMessages": true
+  },
+  "DatabaseSettings": {
+    "ServerType": "SQLServer",
+    "DatabaseName": "M365ExportDB",
+    "AutoCreateDatabase": true,
+    "AutoCreateSchema": true,
+    "ConnectionTimeout": 30,
+    "CommandTimeout": 300,
+    "EnableConnectionPooling": true,
+    "MaxRetryAttempts": 3,
+    "RetryDelaySeconds": 5
+  },
+  "ExportSettings": {
+    "DefaultExportMode": "Incremental",
+    "BatchSize": 100,
+    "PageSize": 999,
+    "EnableParallelProcessing": true,
+    "MaxParallelJobs": 5,
+    "EnableCheckpointing": true,
+    "CheckpointIntervalMinutes": 15
+  },
+  "M365Components": {
+    "AzureAD": {
+      "Enabled": true,
+      "ExportUsers": true,
+      "ExportGroups": true,
+      "ExportDevices": true,
+      "ExportServicePrincipals": true,
+      "ExportApplications": true,
+      "ExportAdministrativeUnits": true,
+      "ExportRoles": true,
+      "IncludeSignInActivity": true,
+      "IncludeLicenseDetails": true
+    },
+    "ExchangeOnline": {
+      "Enabled": true,
+      "ExportMailboxes": true,
+      "ExportEmails": false,
+      "ExportEmailContent": false,
+      "ExportCalendars": true,
+      "ExportContacts": true,
+      "ExportMailRules": true,
+      "ExportDistributionGroups": true,
+      "EmailPageSize": 50,
+      "MaxEmailsPerMailbox": 1000
+    },
+    "SharePointOnline": {
+      "Enabled": true,
+      "ExportSites": true,
+      "ExportLists": true,
+      "ExportListItems": true,
+      "ExportDocumentLibraries": true,
+      "ExportFiles": true,
+      "ExportFileContent": false,
+      "ExportPermissions": true,
+      "ExportSiteSettings": true,
+      "MaxItemsPerList": 5000
+    },
+    "OneDrive": {
+      "Enabled": true,
+      "ExportDrives": true,
+      "ExportFiles": true,
+      "ExportFileContent": false,
+      "ExportPermissions": true,
+      "ExportStorageStats": true
+    },
+    "Teams": {
+      "Enabled": true,
+      "ExportTeams": true,
+      "ExportChannels": true,
+      "ExportMembers": true,
+      "ExportMessages": true,
+      "ExportFiles": true,
+      "ExportSettings": true,
+      "ExportTabs": true,
+      "MaxMessagesPerChannel": 1000
+    },
+    "Planner": {
+      "Enabled": true,
+      "ExportPlans": true,
+      "ExportBuckets": true,
+      "ExportTasks": true,
+      "ExportTaskDetails": true,
+      "ExportAttachments": true
+    },
+    "PowerBI": {
+      "Enabled": false,
+      "ExportWorkspaces": true,
+      "ExportReports": true,
+      "ExportDatasets": true,
+      "ExportDashboards": true,
+      "ExportUsageMetrics": true
+    },
+    "AdditionalServices": {
+      "Yammer": {
+        "Enabled": false,
+        "ExportCommunities": true,
+        "ExportMessages": true
+      },
+      "OneNote": {
+        "Enabled": true,
+        "ExportNotebooks": true,
+        "ExportSections": true,
+        "ExportPages": true
+      },
+      "Forms": {
+        "Enabled": true,
+        "ExportForms": true,
+        "ExportResponses": true
+      },
+      "Stream": {
+        "Enabled": false,
+        "ExportVideos": true,
+        "ExportMetadata": true
+      },
+      "ToDo": {
+        "Enabled": true,
+        "ExportLists": true,
+        "ExportTasks": true
+      },
+      "Bookings": {
+        "Enabled": false,
+        "ExportBusinesses": true,
+        "ExportAppointments": true
+      }
+    }
+  },
+  "GraphAPISettings": {
+    "GraphEndpoint": "https://graph.microsoft.com/v1.0",
+    "GraphBetaEndpoint": "https://graph.microsoft.com/beta",
+    "MaxRetryAttempts": 5,
+    "RetryDelaySeconds": 10,
+    "ThrottleDelaySeconds": 60,
+    "EnableDeltaQueries": true,
+    "TokenRefreshThresholdMinutes": 5
+  },
+  "ComplianceSettings": {
+    "GDPR": {
+      "Enabled": true,
+      "EnableDataMinimization": false,
+      "EnablePseudonymization": false,
+      "DataRetentionDays": 365,
+      "EnableAutoCleanup": true,
+      "PseudonymizeFields": ["EmailAddress", "DisplayName"]
+    },
+    "HIPAA": {
+      "Enabled": true,
+      "EnableAccessLogging": true,
+      "EnableIntegrityChecks": true,
+      "SessionTimeoutMinutes": 30,
+      "RequireSecureTransmission": true
+    },
+    "SOC2": {
+      "Enabled": true,
+      "EnableChangeTracking": true,
+      "EnableMonitoring": true,
+      "EnableAlerts": false,
+      "AlertWebhookUrl": ""
+    }
+  },
+  "AuditSettings": {
+    "EnableAuditLogging": true,
+    "AuditLogRetentionDays": 730,
+    "LogAPIRequests": true,
+    "LogDatabaseOperations": true,
+    "LogDataAccess": true,
+    "ExportAuditLogsToFile": true,
+    "AuditLogExportPath": "./Logs/Audit"
+  },
+  "ExcelExportSettings": {
+    "Enabled": true,
+    "OutputPath": "./Exports/Excel",
+    "OneFilePerTable": true,
+    "MaxRowsPerSheet": 1000000,
+    "AutoSizeColumns": true,
+    "IncludeHeaders": true,
+    "CreateSummarySheet": true,
+    "EnableCompression": true
+  },
+  "CSVExportSettings": {
+    "Enabled": true,
+    "OutputPath": "./Exports/CSV",
+    "Encoding": "UTF8",
+    "Delimiter": ",",
+    "IncludeHeaders": true,
+    "QuoteStrings": true,
+    "EnableCompression": true,
+    "CreateManifest": true
+  },
+  "NotificationSettings": {
+    "EnableEmailNotifications": false,
+    "EmailRecipients": [],
+    "SMTPServer": "",
+    "SMTPPort": 587,
+    "EnableWebhookNotifications": false,
+    "WebhookUrl": "",
+    "NotifyOnSuccess": false,
+    "NotifyOnFailure": true,
+    "NotifyOnWarning": false
+  }
+}
