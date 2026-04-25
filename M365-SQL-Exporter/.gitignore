@@ -1,0 +1,32 @@
+# Sensitive configuration files
+credentials.json
+config.local.json
+*.secret.*
+
+# Export outputs
+Exports/
+Output/
+*.csv
+*.xlsx
+*.zip
+
+# Logs
+Logs/
+*.log
+
+# PowerShell specific
+*.ps1xml
+
+# Temporary files
+*.tmp
+*.temp
+~$*
+
+# Database connection strings with passwords
+connectionstring.txt
+
+# Azure AD app secrets
+appsecrets.json
+
+# Personal user settings
+*.user.json
